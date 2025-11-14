@@ -1,7 +1,19 @@
 spring:
   application:
     name: ${APP_NAME}
-    APP_VERSION: ${API_VERSION}
+    app-version: ${API_VERSION}
+
+  mail:
+    host: ${HOST}
+    port: ${HOST_PORT}
+    username: ${USERNAME}
+    password: ${PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
   datasource:
     url: ${DB_URL}
@@ -19,7 +31,30 @@ spring:
     open-in-view: false
 
 server:
-  port: ${PORT}
+  port: ${APPLICATION_PORT}
+
+# JWT Configuration
+jwt:
+  secret-key: ${JWT_SECRET_KEY}
+  access-token-expiration: ${ACCESS_TOKEN_EXPIRATION}
+  refresh-token-expiration: ${REFRESH_TOKEN_EXPIRATION}
+  refresh-access-token: ${REFRESH_ACCESS_TOKEN}
+
+# Stripe Configuration
+stripe:
+  api-key: ${STRIPE_API_KEY}
+
+# Firebase Configuration
+firebase:
+  project-id: ${FIREBASE_PROJECT_ID}
+  private-key-id: ${FIREBASE_PRIVATE_KEY_ID}
+  private-key: ${FIREBASE_PRIVATE_KEY}
+  client-email: ${FIREBASE_CLIENT_EMAIL}
+  client-id: ${FIREBASE_CLIENT_ID}
+  auth-url: ${FIREBASE_AUTH_URL}
+  token-url: ${FIREBASE_TOKEN_URL}
+  cert-url: ${FIREBASE_CERT_URL}
+
 
 
 
