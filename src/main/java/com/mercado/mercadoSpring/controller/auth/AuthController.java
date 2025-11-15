@@ -2,21 +2,22 @@ package com.mercado.mercadoSpring.controller.auth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.mercado.mercadoSpring.config.ApiResponseConfig;
 import com.mercado.mercadoSpring.constants.user.UserRole;
-import com.mercado.mercadoSpring.dto.auth.LoginDto;
-import com.mercado.mercadoSpring.dto.auth.RegistrationDto;
-import com.mercado.mercadoSpring.dto.auth.ResponseDto;
+import com.mercado.mercadoSpring.dto.auth.*;
 import com.mercado.mercadoSpring.entity.auth.Auth;
 import com.mercado.mercadoSpring.mappers.auth.AuthMapper;
 import com.mercado.mercadoSpring.repository.auth.AuthRepository;
 import com.mercado.mercadoSpring.service.auth.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/${API_VERSION}/users")
@@ -34,18 +35,20 @@ public class AuthController {
     public ResponseEntity<ApiResponseConfig<ResponseDto>> register(@Valid @RequestBody RegistrationDto registrationDto) {
         ResponseDto responseDto = authService.register(registrationDto);
         ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
-                "Registration successful! Please verify the 2FA code sent to your email.",
+                "🎉 Registration successful! A 2FA verification code has been sent to your email. Please enter it within 5 minutes to activate your account.",
                responseDto
         );
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/verify-otp/{userId}")
+    @PostMapping("/verify-otp")
     @Operation(summary = "Verify 2FA OTP for a registered user")
     public ResponseEntity<ApiResponseConfig<Auth>> verifyOTP(
-            @PathVariable Long userId,
-            @RequestParam String otp) {
-        Auth verifiedUser = authService.verifyOTP(userId, otp);
+            @Valid @RequestBody OTPRequest otpRequest) {
+
+        // Delegate to service layer using the validated DTO
+        Auth verifiedUser = authService.verifyOTP(otpRequest);
+
         ApiResponseConfig<Auth> response = new ApiResponseConfig<>(
                 "OTP verified successfully!",
                 verifiedUser
@@ -53,10 +56,11 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/resend-otp/{userId}")
+    @PostMapping("/resend-otp")
     @Operation(summary = "Resend 2FA OTP to the user's email")
-    public ResponseEntity<ApiResponseConfig<Auth>> resendOTP(@PathVariable Long userId) {
-        Auth user = authService.resendOTP(userId);
+    public ResponseEntity<ApiResponseConfig<Auth>> resendOTP(@RequestBody Map<String, String> request) {
+        Auth user = authService.resendOTP(request);
+
         ApiResponseConfig<Auth> response = new ApiResponseConfig<>(
                 "A new OTP has been sent to your email.",
                 user
@@ -64,17 +68,18 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/refresh-token/{userId}")
-    @Operation(summary = "Refresh access and refresh tokens using a valid refresh token")
+    @PostMapping("/refresh-token")
+    @Operation(summary = "Generate a new access token using refresh token")
     public ResponseEntity<ApiResponseConfig<ResponseDto>> refreshToken(
-            @PathVariable Long userId,
-            @RequestParam String refreshToken
-    ) {
-        ResponseDto responseDto = authService.refreshToken(userId, refreshToken);
+            @Valid @RequestBody RefreshTokenRequestDTO request) {
 
+        // Call the service to refresh tokens
+        ResponseDto refreshedTokens = authService.refreshToken(request.getRefreshToken());
+
+        // Wrap the response inside ApiResponseConfig
         ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
-                "Tokens refreshed successfully.",
-                responseDto
+                "🎉 New access token generated successfully!",
+                refreshedTokens
         );
 
         return ResponseEntity.ok(response);
@@ -82,8 +87,9 @@ public class AuthController {
 
     @PostMapping("/magic-link")
     @Operation(summary = "Send a magic login link to the user's email")
-    public ResponseEntity<ApiResponseConfig<String>> sendMagicLink(@RequestParam String email) {
-        authService.sendMagicLink(email);
+    public ResponseEntity<ApiResponseConfig<String>> sendMagicLink(@Valid @RequestBody MagicLinkRequestDTO request) {
+
+        authService.sendMagicLink(request.email());
 
         ApiResponseConfig<String> response = new ApiResponseConfig<>(
                 "Magic login link sent successfully. Please check your email.",
@@ -95,7 +101,9 @@ public class AuthController {
 
     @PostMapping("/magic-login")
     @Operation(summary = "Login user using a magic login link")
-    public ResponseEntity<ApiResponseConfig<ResponseDto>> loginWithMagicLink(@RequestParam String token) {
+    public ResponseEntity<ApiResponseConfig<ResponseDto>> loginWithMagicLink(
+           @Valid @RequestBody MagicLinkTokenDTO request) {
+        String token = request.token();
         ResponseDto responseDto = authService.loginWithMagicLink(token);
 
         ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
@@ -159,24 +167,40 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     @Operation(summary = "Request password reset code via email")
-    public ResponseEntity<ApiResponseConfig<String>> forgotPassword(@RequestParam String email) {
-        authService.forgotPassword(email);
+    public ResponseEntity<ApiResponseConfig<String>> forgotPassword(
+            @Valid @RequestBody ForgotPasswordDTO request,
+            HttpServletResponse response
+    ) {
+        // Service returns the generated reset token
+        String resetToken = authService.forgotPassword(request.email());
 
-        ApiResponseConfig<String> response = new ApiResponseConfig<>(
-                "Password reset code sent successfully! Please check your email.",
+        // Store token securely in HttpOnly cookie
+        Cookie cookie = new Cookie("reset_token", resetToken);
+        cookie.setHttpOnly(true);
+        cookie.setSecure(true);       // Only works over HTTPS
+        cookie.setPath("/");
+        cookie.setMaxAge(15 * 60);    // 15 minutes
+
+        // Add cookie to the response
+
+        response.addCookie(cookie);
+
+        ApiResponseConfig<String> res = new ApiResponseConfig<>(
+                "Password reset token sent successfully! Please check your email.",
                 null
         );
-        return ResponseEntity.ok(response);
+
+        return ResponseEntity.ok(res);
     }
 
     @PostMapping("/reset-password")
-    @Operation(summary = "Reset password using a valid reset token sent via email")
+    @Operation(summary = "Reset password using HttpOnly reset token")
     public ResponseEntity<ApiResponseConfig<String>> resetPassword(
-            @RequestParam String email,
-            @RequestParam String newPassword,
-            @RequestParam String resetToken
+            @CookieValue(name = "reset_token", required = false) String resetToken,
+            @Valid @RequestBody ResetPasswordRequestDTO request
     ) {
-        authService.resetPassword(email, newPassword, resetToken);
+        // Only the new password is provided in the body
+        authService.resetPassword(request.newPassword(), resetToken);
 
         ApiResponseConfig<String> response = new ApiResponseConfig<>(
                 "Password has been reset successfully!",
@@ -185,6 +209,7 @@ public class AuthController {
 
         return ResponseEntity.ok(response);
     }
+
 
     @GetMapping("/all-users")
     @Operation(summary = "Fetch all registered users")
@@ -238,10 +263,12 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/login/google")
+    @PostMapping("/google-login")
     @Operation(summary = "Login with Google account using Firebase token")
-    public ResponseEntity<ApiResponseConfig<ResponseDto>> loginWithGoogle(@RequestParam String googleToken) throws FirebaseAuthException {
-        Auth auth = authService.loginWithGoogle(googleToken);
+    public ResponseEntity<ApiResponseConfig<ResponseDto>> loginWithGoogle(
+            @RequestBody GoogleLoginRequestDTO request
+            ) throws FirebaseAuthException {
+        Auth auth = authService.loginWithGoogle(request.googleToken());
 
         // Wrap the response in ResponseDto without exposing password
         ResponseDto responseDto = new ResponseDto(

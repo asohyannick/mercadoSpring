@@ -1,9 +1,9 @@
 package com.mercado.mercadoSpring.entity.auth;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mercado.mercadoSpring.constants.user.UserRole;
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Entity
@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Auth {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -31,40 +32,64 @@ public class Auth {
     @Column(nullable = false)
     private String password;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserRole role = UserRole.CUSTOMER;
 
+    @Builder.Default
     @Column(nullable = false)
     private Boolean isAccountBlocked = false;
 
-    @Column(nullable = true)
+    @Builder.Default
+    @Column(nullable = false)
     private Boolean isEmailVerified = false;
 
-    @Column(nullable = true)
+    @Column
     private String refreshToken;
 
-    @Column(nullable = true)
+    @Column
     private String accessToken;
 
-    @Column(nullable = true)
+    @Column
     private String twoFactorSecret;
 
-    @Column(nullable = true)
+    @Builder.Default
+    @Column(nullable = false)
     private Boolean isTwoFactorVerified = false;
 
     @Column
     private LocalDateTime twoFactorExpiry;
 
-    @Column
+    @Builder.Default
+    @Column(nullable = false)
     private Integer twoFactorAttempts = 0;
 
-    @Column
+    @Builder.Default
+    @Column(nullable = false)
     private Integer failedLoginAttempts = 0;
+
     @Column
     private String magicToken;
 
     @Column
     private LocalDateTime magicTokenExpiration;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
 
 }

@@ -7,6 +7,7 @@ import com.google.firebase.auth.FirebaseToken;
 import com.mercado.mercadoSpring.config.JwtUtil;
 import com.mercado.mercadoSpring.constants.user.UserRole;
 import com.mercado.mercadoSpring.dto.auth.LoginDto;
+import com.mercado.mercadoSpring.dto.auth.OTPRequest;
 import com.mercado.mercadoSpring.dto.auth.RegistrationDto;
 import com.mercado.mercadoSpring.dto.auth.ResponseDto;
 import com.mercado.mercadoSpring.entity.auth.Auth;
@@ -20,13 +21,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
-
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+
 @Service
 @Transactional
 public class AuthService {
@@ -67,17 +69,25 @@ public class AuthService {
     }
 
     private void send2FACodeEmail(String toEmail, String code) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setTo(toEmail);
-        message.setSubject("Your 2FA Verification Code");
-        message.setText(
-                """
-                        Your verification code is: " +
-                        "" + code + 
-                        "\nUse this code to verify your account."""
-                                .formatted(code)
-        );
-        mailSender.send(message);
+        SimpleMailMessage email = new SimpleMailMessage();
+        email.setTo(toEmail);
+        email.setSubject("🎉 Verify Your Mercado Account");
+        email.setText("""
+        Hello,
+
+        Welcome to Mercado! Your verification code is:
+
+        %s
+
+        ⚡ This code will expire in 5 minutes, so make sure to use it promptly to activate your account.
+
+        If you didn't register for a Mercado account, you can safely ignore this email.
+
+        Cheers,
+        The Mercado Team
+        """.formatted(code));
+
+        mailSender.send(email);
     }
 
     public ResponseDto register(RegistrationDto registrationDto) {
@@ -101,7 +111,7 @@ public class AuthService {
         Auth savedAuth = authRepository.save(auth);
 
         // Send 2FA code via email
-        send2FACodeEmail(savedAuth.getEmail(), savedAuth.getTwoFactorSecret());
+        send2FACodeEmail(savedAuth.getEmail(), twoFactorCode);
 
         // Return safe ResponseDTO (without password)
         return new ResponseDto(
@@ -115,30 +125,37 @@ public class AuthService {
         );
     }
 
-    public Auth verifyOTP(Long userId, String otp) {
-        Auth auth = authRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-        if (!otp.equals(auth.getTwoFactorSecret())) {
-            auth.setTwoFactorAttempts(auth.getTwoFactorAttempts() + 1);
-            authRepository.save(auth);
-            throw new RuntimeException("Invalid OTP");
-        }
+    public Auth verifyOTP(OTPRequest otpRequest) {
+        // The DTO validation will have already ensured this is not blank and 6 chars
+        String otp = otpRequest.getOtp();
+
+        // Find the user who has this OTP and is not yet verified
+        Auth auth = authRepository.findByTwoFactorSecretAndIsTwoFactorVerifiedFalse(otp)
+                .orElseThrow(() -> new RuntimeException("Invalid or expired OTP"));
+
         if (auth.getTwoFactorExpiry().isBefore(LocalDateTime.now())) {
             throw new RuntimeException("OTP has expired. Request a new one.");
-        } else {
-            auth.setIsTwoFactorVerified(true);
-            auth.setTwoFactorSecret(null);
-            auth.setTwoFactorExpiry(null);// clear OTP after successful verification
-            return authRepository.save(auth);
         }
+
+        // Mark 2FA as verified and clear OTP
+        auth.setIsTwoFactorVerified(true);
+        auth.setMagicTokenExpiration(LocalDateTime.now().plusMinutes(15));
+        return authRepository.save(auth);
     }
 
-    public Auth resendOTP(Long userId) {
-        Auth auth = authRepository.findById(userId)
+    public Auth resendOTP(Map<String, String> request) {
+        String email = request.get("email");
+        if (email == null || email.isEmpty()) {
+            throw new RuntimeException("Email must be provided");
+        }
+
+        Auth auth = authRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found"));
+
         if(Boolean.TRUE.equals(auth.getIsTwoFactorVerified())) {
             throw new RuntimeException("2FA already verified");
         }
+
         if(auth.getTwoFactorAttempts() >= 5) {
             throw new RuntimeException("Maximum OTP attempts reached. Please try again later.");
         }
@@ -146,28 +163,39 @@ public class AuthService {
         if(auth.getTwoFactorExpiry() != null && auth.getTwoFactorExpiry().isAfter(LocalDateTime.now())) {
             throw new RuntimeException("OTP already sent. Please check your email.");
         }
+
+        // Generate new OTP
         String newOtp = generate2FACode(auth);
         auth.setTwoFactorSecret(newOtp);
         authRepository.save(auth);
+
+        // Send OTP email
         send2FACodeEmail(auth.getEmail(), newOtp);
+
         return auth;
     }
 
-    public ResponseDto refreshToken(Long userId, String refreshToken) {
-        Auth auth = authRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-        if (!refreshToken.equals(auth.getRefreshToken())) {
-            throw new RuntimeException("Invalid refresh token");
-        }
-        try{
+    public ResponseDto refreshToken(String refreshToken) {
+        // Find user by refresh token
+        Auth auth = authRepository.findByRefreshToken(refreshToken)
+                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+
+        // Validate token
+        try {
             jwtUtil.validateToken(refreshToken);
         } catch (ExpiredJwtException e) {
-            throw new RuntimeException("Refresh token has expired, Please login again");
+            throw new RuntimeException("Refresh token has expired, please login again");
         }
+
+        // Generate new tokens
         String newAccessToken = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole()));
         String newRefreshToken = jwtUtil.generateRefreshToken(auth.getEmail());
+
         auth.setAccessToken(newAccessToken);
         auth.setRefreshToken(newRefreshToken);
+
+        authRepository.save(auth);
+
         return new ResponseDto(
                 auth.getFirstName(),
                 auth.getLastName(),
@@ -180,9 +208,11 @@ public class AuthService {
     }
 
     public void sendMagicLink(String email) {
-        Auth auth = authRepository.findByEmail(email)
+        String sanitizedEmail = email.trim().toLowerCase();
+
+        Auth auth = authRepository.findByEmail(sanitizedEmail)
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        String token = UUID.randomUUID().toString();
+        String token = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole()));
         auth.setMagicToken(token);
         auth.setMagicTokenExpiration(LocalDateTime.now().plusMinutes(15)); // 15 minutes expiry
         authRepository.save(auth);
@@ -225,10 +255,6 @@ public class AuthService {
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
         if (auth.getIsAccountBlocked()) {
             throw new RuntimeException("Your account has been blocked. Contact the System Administrator.");
-        }
-
-        if (!auth.getIsEmailVerified()) {
-            throw new RuntimeException("Email not verified. Please verify your email before logging in.");
         }
 
         if (!passwordEncoder.matches(loginDto.password(), auth.getPassword())) {
@@ -282,13 +308,15 @@ public class AuthService {
         );
     }
 
-    public void forgotPassword(String email) {
+    public String forgotPassword(String email) {
         Auth auth = authRepository.findByEmail(email).orElseThrow(() -> new RuntimeException("User not found"));
         // Generate six digit 2FA code
         String resetCode = generate2FACode(auth);
         auth.setTwoFactorSecret(resetCode);
-        auth.setTwoFactorExpiry(LocalDateTime.now().plusMinutes(15)); // 15 minutes expiry
+        auth.setTwoFactorExpiry(LocalDateTime.now().plusMinutes(5)); // 15 minutes expiry
+        auth.setIsTwoFactorVerified(false);
         authRepository.save(auth);
+
         // Send reset code via email
         SimpleMailMessage message = new SimpleMailMessage();
         message.setTo(email);
@@ -296,21 +324,31 @@ public class AuthService {
         message.setText("Your password reset code is: " + resetCode +
                 "\n\nThis code will expire in 15 minutes.");
         mailSender.send(message);
+        return resetCode;
     }
 
-    public void resetPassword(String email, String newPassword, String resetToken) {
-        Auth auth = authRepository.findByEmail(email).orElseThrow(() -> new RuntimeException("User not found"));
-        if (!resetToken.equals(auth.getTwoFactorSecret())) {
-            throw new RuntimeException("Invalid reset token");
+    public void resetPassword(String newPassword, String resetTokenFromCookie) {
+
+        // Check if cookie exists
+        if (resetTokenFromCookie == null || resetTokenFromCookie.isEmpty()) {
+            throw new RuntimeException("Reset token missing");
         }
+
+        // Find user by reset token stored in database
+        Auth auth = authRepository.findByTwoFactorSecret(resetTokenFromCookie)
+                .orElseThrow(() -> new RuntimeException("Invalid or expired reset token"));
+
+        // Check if token expired
         if (auth.getTwoFactorExpiry().isBefore(LocalDateTime.now())) {
             throw new RuntimeException("Reset token has expired");
-        } else {
-            auth.setPassword(passwordEncoder.encode(newPassword));
-            auth.setTwoFactorSecret(null);
-            auth.setTwoFactorExpiry(null);
-            authRepository.save(auth);
         }
+
+        // Update password
+        auth.setPassword(passwordEncoder.encode(newPassword));
+        auth.setTwoFactorSecret(null);      // Clear token
+        auth.setTwoFactorExpiry(null);      // Clear token expiry
+
+        authRepository.save(auth);
     }
 
     public List<Auth> findAllUsers() {
@@ -333,7 +371,7 @@ public class AuthService {
 
     public Auth unBlockUser(Long userId) {
         Auth auth = authRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
-        if (Boolean.TRUE.equals(auth.getIsAccountBlocked())) {
+        if (!Boolean.TRUE.equals(auth.getIsAccountBlocked())) {
             throw new RuntimeException("User account is not blocked");
         }
         auth.setIsAccountBlocked(false);
@@ -371,6 +409,9 @@ public class AuthService {
     public Auth loginWithGoogle(String googleToken) throws FirebaseAuthException {
         // Use correct variable name
         FirebaseToken decodedToken = FirebaseAuth.getInstance().verifyIdToken(googleToken);
+        if (decodedToken == null || decodedToken.getEmail() == null) {
+            throw new RuntimeException("Invalid Firebase token");
+        }
         String email = decodedToken.getEmail();
 
         Auth auth = authRepository.findByEmail(email)

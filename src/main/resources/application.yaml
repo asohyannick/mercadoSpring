@@ -4,10 +4,10 @@ spring:
     app-version: ${API_VERSION}
 
   mail:
-    host: ${HOST}
-    port: ${HOST_PORT}
-    username: ${USERNAME}
-    password: ${PASSWORD}
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
     properties:
       mail:
         smtp:
@@ -54,6 +54,11 @@ firebase:
   auth-url: ${FIREBASE_AUTH_URL}
   token-url: ${FIREBASE_TOKEN_URL}
   cert-url: ${FIREBASE_CERT_URL}
+
+logging:
+  level:
+    org.springframework.mail: INFO
+    jakarta.mail: WARN
 
 
 
