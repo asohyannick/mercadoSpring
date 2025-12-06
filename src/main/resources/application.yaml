@@ -58,6 +58,9 @@ firebase:
 logging:
   level:
     org.springframework.mail: INFO
+    org:
+      springframework:
+        security=DEBUG:
     jakarta.mail: WARN
 
 

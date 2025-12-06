@@ -10,4 +10,6 @@ public record ResponseDto(
         String accessToken,
         String refreshToken,
         UserRole role
-) {}
+) {
+
+}

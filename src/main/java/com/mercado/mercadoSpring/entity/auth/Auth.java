@@ -1,11 +1,9 @@
 package com.mercado.mercadoSpring.entity.auth;
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mercado.mercadoSpring.constants.user.UserRole;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
-
 @Entity
 @Table(name = "users")
 @Getter
@@ -14,7 +12,6 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Auth {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

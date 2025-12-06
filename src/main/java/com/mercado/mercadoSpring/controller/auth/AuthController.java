@@ -19,24 +19,64 @@ import java.util.List;
 import java.util.Map;
 @RestController
 @Tag(name = "Authentication & User Management Endpoints")
-@RequestMapping("/api/${API_VERSION}/users")
+@RequestMapping("/api/${API_VERSION}/auth")
 @RequiredArgsConstructor
 public class AuthController {
     private final AuthService authService;
     private final AuthRepository authRepository;
     private final AuthMapper authMapper;
+    private void addAuthCookies(HttpServletResponse response, String accessToken, String refreshToken) {
+        Cookie accessCookie = new Cookie("accessToken", accessToken);
+        accessCookie.setHttpOnly(true);
+        accessCookie.setSecure(false); // ❗ true in production with HTTPS
+        accessCookie.setPath("/");
+        accessCookie.setMaxAge(60 * 60); // 1 hour, or match JWT exp
+
+        Cookie refreshCookie = new Cookie("refreshToken", refreshToken);
+        refreshCookie.setHttpOnly(true);
+        refreshCookie.setSecure(false); // true in production
+        refreshCookie.setPath("/");
+        refreshCookie.setMaxAge(7 * 24 * 60 * 60); // 7 days, or match refresh exp
+
+        response.addCookie(accessCookie);
+        response.addCookie(refreshCookie);
+    }
+
+    private void clearAuthCookies(HttpServletResponse response) {
+        Cookie accessCookie = new Cookie("accessToken", "");
+        accessCookie.setHttpOnly(true);
+        accessCookie.setSecure(false);
+        accessCookie.setPath("/");
+        accessCookie.setMaxAge(0); // delete immediately
+
+        Cookie refreshCookie = new Cookie("refreshToken", "");
+        refreshCookie.setHttpOnly(true);
+        refreshCookie.setSecure(false);
+        refreshCookie.setPath("/");
+        refreshCookie.setMaxAge(0);
+
+        response.addCookie(accessCookie);
+        response.addCookie(refreshCookie);
+    }
     /**
      * User registration endpoint
      */
     @PostMapping("/register")
     @Operation(summary = "Register a new user with 2FA email verification")
-    public ResponseEntity<ApiResponseConfig<ResponseDto>> register(@Valid @RequestBody RegistrationDto registrationDto) {
+    public ResponseEntity<ApiResponseConfig<ResponseDto>> register(
+            @Valid @RequestBody RegistrationDto registrationDto,
+            HttpServletResponse response
+    ) {
         ResponseDto responseDto = authService.register(registrationDto);
-        ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
+        // Set HttpOnly cookie with tokens
+        if (responseDto.accessToken() != null && responseDto.refreshToken() != null) {
+           addAuthCookies(response, responseDto.accessToken(), responseDto.refreshToken());
+        }
+        ApiResponseConfig<ResponseDto> apiResponse = new ApiResponseConfig<>(
                 "🎉 Registration successful! A 2FA verification code has been sent to your email. Please enter it within 5 minutes to activate your account.",
                responseDto
         );
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(apiResponse);
     }
 
     @PostMapping("/verify-otp")
@@ -86,14 +126,11 @@ public class AuthController {
     @PostMapping("/magic-link")
     @Operation(summary = "Send a magic login link to the user's email")
     public ResponseEntity<ApiResponseConfig<String>> sendMagicLink(@Valid @RequestBody MagicLinkRequestDTO request) {
-
         authService.sendMagicLink(request.email());
-
         ApiResponseConfig<String> response = new ApiResponseConfig<>(
                 "Magic login link sent successfully. Please check your email.",
                 null
         );
-
         return ResponseEntity.ok(response);
     }
 
@@ -114,7 +151,10 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "Login user with email and password")
-    public ResponseEntity<ApiResponseConfig<ResponseDto>> login(@Valid @RequestBody LoginDto loginDto) {
+    public ResponseEntity<ApiResponseConfig<ResponseDto>> login(
+            @Valid @RequestBody LoginDto loginDto,
+            HttpServletResponse response
+    ) {
         Auth auth = authService.login(loginDto);
 
         // Build a safe ResponseDto
@@ -128,26 +168,30 @@ public class AuthController {
                 UserRole.valueOf(String.valueOf(auth.getRole()))
         );
 
+        // ✅ Set HttpOnly cookies
+        addAuthCookies(response, auth.getAccessToken(), auth.getRefreshToken());
+
         // Wrap in ApiResponseConfig
-        ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
+        ApiResponseConfig<ResponseDto> apiResponse = new ApiResponseConfig<>(
                 "Login successful!",
                 responseDto
         );
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(apiResponse);
     }
 
     @PostMapping("/logout/{userId}")
     @Operation(summary = "Logout user and invalidate tokens")
-    public ResponseEntity<ApiResponseConfig<ResponseDto>> logout(@PathVariable Long userId) {
+    public ResponseEntity<ApiResponseConfig<ResponseDto>> logout(@PathVariable Long userId, HttpServletResponse   response) {
         ResponseDto responseDto = authService.logout(userId);
-
-        ApiResponseConfig<ResponseDto> response = new ApiResponseConfig<>(
+        // Clear HttpOnly cookies
+        clearAuthCookies(response);
+        ApiResponseConfig<ResponseDto> apiResponse = new ApiResponseConfig<>(
                 "Logout successful!",
                 responseDto
         );
 
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(apiResponse);
     }
 
     @DeleteMapping("/delete/{userId}")

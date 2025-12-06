@@ -1,5 +1,4 @@
 package com.mercado.mercadoSpring.config;
-
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,7 +43,7 @@ public class JwtUtil {
 
     public Claims validateToken(String token) throws ExpiredJwtException, JwtException {
         return Jwts.parser()
-                .setSigningKey(jwtSecret.getBytes(StandardCharsets.UTF_8)) // match signing
+                .setSigningKey(jwtSecret.getBytes(StandardCharsets.UTF_8))  // match signing
                 .build()
                 .parseClaimsJws(token)
                 .getBody();

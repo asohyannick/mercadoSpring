@@ -91,9 +91,9 @@ public class AuthService {
     }
 
     public ResponseDto register(RegistrationDto registrationDto) {
-     if (authRepository.existsByEmail(registrationDto.email())) {
+        if (authRepository.existsByEmail(registrationDto.email())) {
          throw new RuntimeException("Email already exists");
-     }
+        }
         Auth auth = authMapper.toAuthEntity(registrationDto);
         auth.setPassword(passwordEncoder.encode(registrationDto.password()));
 
@@ -106,7 +106,7 @@ public class AuthService {
         auth.setIsTwoFactorVerified(Boolean.valueOf(String.valueOf(false)));
 
         // Generate access + refresh tokens
-        String accessToken = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole()));
+        String accessToken = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole().name()));
         String refreshToken = jwtUtil.generateRefreshToken(auth.getEmail());
 
         auth.setAccessToken(accessToken);
@@ -131,7 +131,7 @@ public class AuthService {
 
     public Auth verifyOTP(OTPRequest otpRequest) {
         // The DTO validation will have already ensured this is not blank and 6 chars
-        String otp = otpRequest.getOtp();
+        String otp = otpRequest.getOtp().trim();
 
         // Find the user who has this OTP and is not yet verified
         Auth auth = authRepository.findByTwoFactorSecretAndIsTwoFactorVerifiedFalse(otp)
@@ -274,7 +274,7 @@ public class AuthService {
         auth.setIsEmailVerified(true);
         auth.setFailedLoginAttempts(0); // Reset on successful login
         // Generate access + refresh tokens
-        String accessToken = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole()));
+        String accessToken = jwtUtil.generateAccessToken(auth.getEmail(), String.valueOf(auth.getRole().name()));
         String refreshToken = jwtUtil.generateRefreshToken(auth.getEmail());
         auth.setAccessToken(accessToken);
         auth.setRefreshToken(refreshToken);
@@ -358,7 +358,6 @@ public class AuthService {
     public List<Auth> findAllUsers() {
         return authRepository.findAll();
     }
-
     public Auth findUserById(Long userId) {
         return authRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
